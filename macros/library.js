@@ -1,66 +1,126 @@
-/* Wretcluse macro library — display and search, no external dependencies. */
+/* Wretcluse macro library: data in macro-data.js, no external libraries or backend. */
 (() => {
-  "use strict";
+  'use strict';
   const data = Array.isArray(window.WRETCLUSE_MACROS) ? window.WRETCLUSE_MACROS : [];
-  const allCats = [...new Set(data.map(x => x.category))];
-  const preferred = ["General / Utility", "Rogue", "Warrior", "Demon Hunter", "Druid", "Evoker", "Hunter", "Mage", "Warlock", "Racial"];
-  const cats = preferred.filter(x => allCats.includes(x)).concat(allCats.filter(x => !preferred.includes(x)));
-  const counts = new Map(cats.map(c => [c, data.filter(m => m.category === c).length]));
-  const elements = {
-    filter: document.querySelector('#filters'), search: document.querySelector('#search'),
-    results: document.querySelector('#results'), none: document.querySelector('#none'),
-    summary: document.querySelector('#summary'), more: document.querySelector('#more'),
-    announcer: document.querySelector('#announcer')
+  const $ = (selector) => document.querySelector(selector);
+  const ui = {
+    search: $('#search'), filters: $('#filters'), character: $('#character'),
+    purpose: $('#purpose'), reset: $('#reset'), results: $('#results'),
+    summary: $('#summary'), none: $('#none'), more: $('#more'), announcer: $('#announcer')
   };
-  let selected = "All", visibleCount = 24;
-  const safeText = (tag, value, css) => { const e = document.createElement(tag); if (css) e.className = css; e.textContent = value; return e; };
-  function makeFilter(name, count) {
-    const button = safeText('button', `${name}  ${count}`, 'filter');
-    button.type = 'button'; button.setAttribute('aria-pressed', String(name === selected));
-    button.addEventListener('click', () => { selected = name; visibleCount = 24; render(); updateButtons(); });
-    return button;
+  const el = (tag, text, cls) => {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  };
+  const distinct = (items) => [...new Set(items.filter(Boolean))].sort((a,b) => a.localeCompare(b));
+  const classes = distinct(data.map(m => m.class));
+  const purposes = distinct(data.map(m => m.purpose));
+  const characters = distinct(data.map(m => m.character));
+  let chosenClass = 'all';
+  let page = 24;
+  const classButtons = new Map();
+  const cardCache = new Map();
+
+  function addOption(select, value, caption) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = caption;
+    select.append(option);
   }
-  elements.filter.append(makeFilter('All', data.length));
-  cats.forEach(c => elements.filter.append(makeFilter(c, counts.get(c))));
-  function updateButtons() {
-    [...elements.filter.children].forEach(button => {
-      button.setAttribute('aria-pressed', String(button.textContent.startsWith(selected + '  ')));
+  addOption(ui.character, 'account-wide', 'Account-wide only');
+  characters.forEach(character => addOption(ui.character, character, character));
+  purposes.forEach(p => addOption(ui.purpose, p, p));
+
+  function makeClass(name, number) {
+    const button = el('button', `${name}  ${number}`, 'filter');
+    button.type = 'button';
+    button.setAttribute('aria-pressed', String(name === 'all'));
+    button.addEventListener('click', () => {
+      chosenClass = name;
+      page = 24;
+      update();
+    });
+    classButtons.set(name, button);
+    ui.filters.append(button);
+  }
+  makeClass('all', data.length);
+  classes.forEach(className => makeClass(className, data.filter(m => m.class === className).length));
+  // Labels are presentation only; keys remain literal class names.
+  classButtons.get('all').textContent = `All classes  ${data.length}`;
+
+  function getMatches() {
+    const q = ui.search.value.trim().toLowerCase();
+    const person = ui.character.value;
+    const whichPurpose = ui.purpose.value;
+    return data.filter(m => {
+      if (chosenClass !== 'all' && m.class !== chosenClass) return false;
+      if (person === 'account-wide' && m.scope !== 'Account-wide') return false;
+      if (person !== 'all' && person !== 'account-wide' && m.character !== person) return false;
+      if (whichPurpose !== 'all' && m.purpose !== whichPurpose) return false;
+      if (!q) return true;
+      return [m.title,m.name,m.class,m.purpose,m.character,m.realm,m.description,
+        m.scope,m.id,m.code,...(m.tags || [])].some(v => String(v || '').toLowerCase().includes(q));
     });
   }
-  function card(m) {
-    const el = safeText('article', null, 'card');
-    const head = safeText('div', null, 'card-head');
-    head.append(safeText('span', m.category, 'category'));
-    head.append(safeText('span', `ID ${m.id}`, 'id'));
-    el.append(head, safeText('h3', m.name));
-    el.append(safeText('pre', m.code, 'code'));
-    const foot = safeText('div', null, 'card-foot');
-    const copy = safeText('button', 'Copy macro ↗', 'copy');copy.type = 'button';
-    copy.addEventListener('click', async () => {
-      try {
-        if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(m.code);
-        else {
-          const t = safeText('textarea', m.code);t.style.cssText='position:fixed;left:-9999px;opacity:0';
-          document.body.append(t);t.select();const ok=document.execCommand('copy');t.remove();if (!ok) throw Error('copy not supported');
-        }
-        copy.textContent='Copied ✓'; elements.announcer.textContent=m.name+' copied';
-        window.setTimeout(() => {copy.textContent='Copy macro ↗';},1600);
-      } catch (e) { copy.textContent='Select the text above to copy'; elements.announcer.textContent='Automatic copy unavailable'; }
-    });
-    foot.append(copy, safeText('span', `${m.code.length} characters`, 'length'));
-    el.append(foot);return el;
+
+  async function copyText(button, macro) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(macro.code);
+      } else {
+        const field = el('textarea', macro.code);
+        field.style.cssText='position:fixed;left:-9999px;opacity:0';
+        document.body.append(field);
+        field.select();
+        const okay = document.execCommand('copy');
+        field.remove();
+        if (!okay) throw new Error('Clipboard unsupported');
+      }
+      button.textContent='Copied ✓';
+      ui.announcer.textContent=macro.title+' copied';
+      setTimeout(()=> { button.textContent='Copy macro ↗'; },1600);
+    } catch (_) {
+      ui.announcer.textContent='Copy unavailable. Select the macro text to copy.';
+      button.textContent='Select text to copy';
+    }
   }
-  function render() {
-    const query = elements.search.value.toLowerCase().trim();
-    const results = data.filter(m => (selected === 'All' || m.category === selected) &&
-      (!query || [m.name,m.id,m.category,m.code].some(v=>v.toLowerCase().includes(query))));
-    const visible = results.slice(0,visibleCount);
-    elements.results.replaceChildren(...visible.map(card));
-    elements.none.hidden=results.length>0;
-    elements.summary.textContent=`SHOWING ${visible.length} / ${results.length} · ${data.length} TOTAL`;
-    elements.more.hidden=visible.length>=results.length;
+  function macroCard(m) {
+    if (cardCache.has(m.key)) return cardCache.get(m.key);
+    const article = el('article',null,'card');
+    const head=el('div',null,'card-head');
+    head.append(el('span',m.class,'category'),el('span',m.scope==='Account-wide'?'Account-wide':`${m.character} · ${m.realm}`,'source'));
+    article.append(head,el('h3',m.title));
+    article.append(el('p',m.description,'description'));
+    const meta=el('div',null,'meta');
+    meta.append(el('span',m.purpose,'purpose'),el('span',`ID ${m.id}`,'id'));
+    article.append(meta);
+    article.append(el('pre',m.code,'code'));
+    const bottom=el('div',null,'card-foot');
+    const copy=el('button','Copy macro ↗','copy'); copy.type='button';
+    copy.addEventListener('click',()=>copyText(copy,m));
+    bottom.append(copy,el('span',`${m.code.length} characters`,'length'));
+    article.append(bottom);
+    cardCache.set(m.key,article);
+    return article;
   }
-  elements.more.addEventListener('click',()=>{visibleCount += 24;render();});
-  elements.search.addEventListener('input',()=>{visibleCount=24;render();});
-  render();
+
+  function update() {
+    const matches=getMatches();
+    const visible=matches.slice(0,page);
+    ui.results.replaceChildren(...visible.map(macroCard));
+    ui.none.hidden=matches.length!==0;
+    ui.summary.textContent=`SHOWING ${visible.length} / ${matches.length} · ${data.length} TOTAL`;
+    ui.more.hidden=visible.length>=matches.length;
+    for (const [className,button] of classButtons) button.setAttribute('aria-pressed',String(className===chosenClass));
+  }
+  for (const field of [ui.search,ui.character,ui.purpose]) {
+    field.addEventListener(field===ui.search?'input':'change',()=>{page=24;update();});
+  }
+  ui.more.addEventListener('click',()=>{page+=24;update();});
+  ui.reset.addEventListener('click',()=>{
+    chosenClass='all'; ui.search.value='';ui.character.value='all';ui.purpose.value='all';page=24;update();
+  });
+  update();
 })();
