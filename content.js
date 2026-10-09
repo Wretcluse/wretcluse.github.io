@@ -17,8 +17,8 @@ window.WRETCLUSE_CONTENT = {
       description: "A personal collection of subtle interface improvements: unit frames, nameplates, shortcuts, and a few things Blizzard almost got right.",
       detail: "Midnight · Lua addon",
       tags: ["Interface", "Quality of life", "Lua"],
-      status: "In development",
-      downloadUrl: ""
+      status: "Available",
+      downloadUrl: "https://github.com/Wretcluse/WretcluseUI/releases/latest/download/WretcluseUI.zip"
     },
     {
       category: "WORLD OF WARCRAFT / HOUSING",
